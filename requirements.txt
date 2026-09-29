@@ -1,0 +1,8 @@
+   ultralytics
+   fastapi
+   uvicorn[standard]
+   python-multipart
+   opencv-python
+   onnxruntime
+   evidently
+   dvc[gdrive]
