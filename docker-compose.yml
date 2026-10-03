@@ -1,0 +1,7 @@
+services:
+  traffic-monitor:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/raw:/app/data/raw:ro

@@ -1,0 +1,8 @@
+.venv
+.git
+.dvc
+data/raw
+data/processed
+data/tracked
+__pycache__
+*.pyc

@@ -11,8 +11,11 @@ from detector import load_model, detect_frame, draw_detections, TARGET_CLASSES
 
 app = FastAPI(title="Urban Traffic Monitor API")
 
-model = load_model("yolov8n.pt")  # модель грузим один раз при старте сервера
+model = load_model("yolov8n.onnx")  # модель грузим один раз при старте сервера
+from drift_monitor import DriftMonitor
 
+drift_monitor = DriftMonitor(baseline_brightness=118.3, baseline_contrast=52.1)
+# ^ подставь СВОИ числа с шага калибровки
 
 def compute_stats(detections):
     counts = {}
@@ -50,6 +53,7 @@ async def detect_frame_endpoint(file: UploadFile = File(...)):
         return JSONResponse(status_code=400, content={"error": "Не удалось прочитать изображение"})
 
     detections = detect_frame(model, frame)
+    drift_result = drift_monitor.check(frame)
     annotated = draw_detections(frame.copy(), detections)
 
     boxes_json = [
@@ -64,6 +68,7 @@ async def detect_frame_endpoint(file: UploadFile = File(...)):
     return {
         "detections": boxes_json,
         "stats": compute_stats(detections),
+        "drift": drift_result,
         "annotated_image_base64": encode_frame_to_base64(annotated),
     }
 
@@ -90,11 +95,13 @@ async def detect_stream_endpoint(websocket: WebSocket):
                 break
 
             detections = detect_frame(model, frame)
+            drift_result = drift_monitor.check(frame)
             annotated = draw_detections(frame.copy(), detections)
 
             await websocket.send_json({
                 "frame": encode_frame_to_base64(annotated),
                 "stats": compute_stats(detections),
+                "drift": drift_result,
             })
 
             await asyncio.sleep(0.03)  # небольшой буфер, не душим event loop
