@@ -8,3 +8,8 @@ data/tracked/
 test_frame.jpg
 drift_log.jsonl
 *.onnx
+data/processed/
+frame_day.jpg
+frame_night.jpg
+chroma_db/
+.DS_Store

@@ -11,7 +11,7 @@ from detector import load_model, detect_frame, draw_detections, TARGET_CLASSES
 
 app = FastAPI(title="Urban Traffic Monitor API")
 
-model = load_model("yolov8n.onnx")  # модель грузим один раз при старте сервера
+model = load_model("yolov8n.pt")  # модель грузим один раз при старте сервера
 from drift_monitor import DriftMonitor
 
 drift_monitor = DriftMonitor(baseline_brightness=118.3, baseline_contrast=52.1)
