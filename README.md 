@@ -1,0 +1,109 @@
+![CI](https://github.com/mariammnatsakanyan09-dot/Urban-Traffic-Anomaly-Analysis/actions/workflows/ci.yml/badge.svg)
+
+# Urban Traffic & Anomaly Analysis
+
+An end-to-end MVP for a smart-city traffic monitoring service: a FastAPI backend that detects and tracks vehicles and pedestrians in dashcam footage, monitors incoming data for drift (night/rain conditions), and ships as a Docker container.
+
+## Features
+
+- **Object detection** (YOLOv8n, pretrained on COCO) — cars, trucks, buses, motorcycles, and pedestrians, detected frame-by-frame with bounding boxes.
+- **Multi-object tracking** (ByteTrack, built into Ultralytics) — assigns a persistent ID to each object and counts line crossings to estimate traffic flow and direction.
+- **REST + WebSocket API** (FastAPI) — `POST /detect_frame` for single images, `WebSocket /detect_stream` for real-time video streaming with live stats.
+- **Data drift monitoring** — tracks frame brightness/contrast against a calibrated baseline and raises an alert when conditions shift sharply (e.g. nightfall, heavy rain), logged to `drift_log.jsonl`.
+- **Inference optimization** — the model is exported to ONNX and benchmarked against the native PyTorch model (see Benchmarks below).
+- **Containerized** — `Dockerfile` + `docker-compose.yml` for one-command deployment.
+- **CI** — GitHub Actions builds the Docker image and runs an import smoke test on every push.
+- **Data versioning** — large raw video files are tracked with DVC against a Google Drive remote (see "Getting video data" below).
+
+## Architecture
+
+```
+dashcam video / uploaded image
+        |
+        v
+ FastAPI backend (app.py)
+   |- detector.py       -> YOLOv8n inference + bounding-box drawing
+   |- drift_monitor.py  -> brightness/contrast drift detection
+        |
+        v
+ JSON response / WebSocket stream
+   (detections, traffic stats, drift status, annotated frame)
+```
+
+Tracking (`tracker.py`, `run_tracking.py`) runs as a standalone batch script rather than inside the API, since line-crossing counts are computed over a full video rather than per single request.
+
+## How to run
+
+### Option A — Docker (recommended)
+
+```bash
+docker compose up --build
+```
+
+Then open http://localhost:8000/docs for the interactive API docs (Swagger UI).
+
+### Option B — Local Python environment
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app:app --reload --port 8000
+```
+
+### Getting video data
+
+Two short sample videos (one daytime, one nighttime) are committed directly under `data/samples/`, so the project works immediately after cloning, with no extra setup:
+
+```bash
+mkdir -p data/raw
+cp data/samples/*.mp4 data/raw/
+```
+
+The full raw dataset (8 videos) is version-controlled with [DVC](https://dvc.org) against a personal Google Drive remote. Because that remote uses a personal (non-Workspace) OAuth client in testing mode, `dvc pull` only works for Google accounts explicitly added as test users — available on request.
+
+### Testing the endpoints
+
+- **`POST /detect_frame`** — open `/docs`, click "Try it out" on this endpoint, upload any image.
+- **`WebSocket /detect_stream`** — open `test_stream.html` directly in a browser, enter a video filename available under `data/raw` (e.g. one of the sample videos copied above), click "Start".
+
+## Scripts
+
+| Script | Purpose |
+|---|---|
+| `run_detection.py` | Batch-run detection over videos in `data/raw`; saves annotated output and prints an FPS benchmark |
+| `run_tracking.py` | Batch-run ByteTrack tracking with line-crossing counting |
+| `calibrate_baseline.py` | Computes the brightness/contrast baseline used by drift monitoring |
+| `extract_frames.py` | Pulls single test frames out of videos (used for manual API testing) |
+| `benchmark_onnx.py` | Compares PyTorch vs. ONNX Runtime inference speed |
+
+## Benchmarks
+
+Measured on an Apple M1 Pro (CPU only), 150 frames, downscaled to 1280px max width:
+
+| Backend | FPS |
+|---|---|
+| PyTorch (.pt) | 19.59 |
+| ONNX Runtime | 20.42 |
+
+The gain from ONNX is modest here because PyTorch is already well optimized for Apple Silicon via Metal; a larger improvement would be expected on a typical x86 CPU without equivalent native acceleration.
+
+## Known limitations & future work
+
+- **Dashcam footage, not a static camera.** The sample videos are filmed from a moving vehicle, so the line-crossing counts demonstrate the tracking algorithm rather than represent real traffic statistics from a fixed street camera — the same code would produce meaningful counts on genuine static traffic-camera footage.
+- **yolov8n is the lightest YOLOv8 variant**, chosen for real-time speed over accuracy; a larger variant (e.g. `yolov8s`) would trade FPS for better recall on small or distant objects.
+- **CI only, no CD.** GitHub Actions builds and smoke-tests the Docker image on every push, but there is no cloud deployment target configured yet to auto-deploy to.
+- **Personal Google Drive DVC remote** doesn't scale to arbitrary reviewers without being added as an OAuth test user; a production setup would use a shared drive or a cloud bucket (S3/GCS) instead.
+- **Synchronous inference inside the WebSocket loop** is fine for a single demo client, but would need `run_in_executor` (or a dedicated worker process) to serve multiple concurrent streams without blocking the event loop.
+
+## Datasets referenced
+
+Sample dashcam footage is used here for demonstration. For training or fine-tuning a custom detector at scale, these public datasets were used as reference/inspiration for the project's design:
+
+- [BDD100K](https://bdd-data.berkeley.edu/) — Berkeley DeepDrive, a large-scale and diverse driving video dataset.
+- [MIO-TCD](https://tcd.miovision.com/) — a traffic-camera dataset for vehicle classification and localization.
+- [Cityscapes](https://www.cityscapes-dataset.com/) — an urban street-scene segmentation dataset.
+
+## Tech stack
+
+Python, FastAPI, Ultralytics YOLOv8, ByteTrack, OpenCV, ONNX Runtime, DVC, Docker, GitHub Actions.

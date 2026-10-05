@@ -3,7 +3,7 @@ import time
 import cv2
 from detector import load_model, detect_frame
 
-VIDEO_PATH = sorted(glob.glob("data/raw/*.mp4"))[0]
+VIDEO_PATH = sorted(glob.glob("data/samples/*.mp4"))[0]
 MAX_FRAMES = 150
 MAX_WIDTH = 1280
 
@@ -33,11 +33,11 @@ def main():
     print(f"Видео для теста: {VIDEO_PATH}\n")
 
     print("PyTorch (.pt):")
-    fc, el, fps = benchmark("yolov8n.pt", VIDEO_PATH)
+    fc, el, fps = benchmark("yolov8s.pt", VIDEO_PATH)
     print(f"  {fc} кадров, {el:.1f} сек, {fps:.2f} FPS\n")
 
     print("ONNX (onnxruntime):")
-    fc, el, fps = benchmark("yolov8n.onnx", VIDEO_PATH)
+    fc, el, fps = benchmark("yolov8s.onnx", VIDEO_PATH)
     print(f"  {fc} кадров, {el:.1f} сек, {fps:.2f} FPS\n")
 
 

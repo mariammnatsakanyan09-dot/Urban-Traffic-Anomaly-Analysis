@@ -4,11 +4,11 @@ import time
 import cv2
 from detector import load_model, detect_frame, draw_detections
 
-INPUT_DIR = "data/raw"
+INPUT_DIR = "data/samples"
 OUTPUT_DIR = "data/processed"
 VIDEO_PATTERNS = ("*.mp4", "*.mov", "*.avi", "*.webm")
-MAX_VIDEOS = 3          # пока обрабатываем не больше 3 роликов для скорости
-MAX_WIDTH = 1280        # уменьшаем 4K-кадры перед детекцией
+MAX_VIDEOS = 3          
+MAX_WIDTH = 1280     
 
 
 def process_video(model, video_path, output_path, max_width=MAX_WIDTH):
@@ -54,7 +54,7 @@ def process_video(model, video_path, output_path, max_width=MAX_WIDTH):
 
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    model = load_model("yolov8n.pt")
+    model = load_model("yolov8s.pt")
 
     video_files = []
     for pattern in VIDEO_PATTERNS:

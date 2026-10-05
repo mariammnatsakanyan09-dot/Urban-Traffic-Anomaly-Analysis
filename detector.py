@@ -1,7 +1,7 @@
 import cv2
 from ultralytics import YOLO
 
-# Классы COCO, которые нам нужны
+
 TARGET_CLASSES = {
     0: "person",
     2: "car",
@@ -19,7 +19,7 @@ COLORS = {
 }
 
 
-def load_model(weights_path="yolov8n.pt"):
+def load_model(weights_path="yolov8s.pt"):
     return YOLO(weights_path)
 
 

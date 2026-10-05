@@ -1,6 +1,8 @@
 import base64
 import asyncio
 import json
+import os
+import tempfile
 
 import cv2
 import numpy as np
@@ -8,14 +10,20 @@ from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from detector import load_model, detect_frame, draw_detections, TARGET_CLASSES
+from drift_monitor import DriftMonitor
 
 app = FastAPI(title="Urban Traffic Monitor API")
 
-model = load_model("yolov8n.pt")  # модель грузим один раз при старте сервера
-from drift_monitor import DriftMonitor
+model = load_model("yolov8s.pt")  # load the model once at server startup
 
-drift_monitor = DriftMonitor(baseline_brightness=118.3, baseline_contrast=52.1)
-# ^ подставь СВОИ числа с шага калибровки
+# Fixed baseline for single-image checks via /detect_frame, calibrated from calibrate_baseline.py.
+# For continuous streams (/detect_stream), each connection gets its own auto-calibrating
+# DriftMonitor instead — see detect_stream_endpoint below — so it adapts to that camera's
+# own viewing angle instead of being compared against this one fixed reference.
+drift_monitor = DriftMonitor(baseline_brightness=116.9, baseline_contrast=49.8)
+
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".webm", ".mkv")
+
 
 def compute_stats(detections):
     counts = {}
@@ -25,7 +33,7 @@ def compute_stats(detections):
 
     total_vehicles = sum(v for k, v in counts.items() if k != "person")
 
-    # простая эвристика загруженности — для MVP этого достаточно
+    # simple congestion heuristic — good enough for an MVP
     if total_vehicles >= 8:
         load = "high"
     elif total_vehicles >= 4:
@@ -43,18 +51,41 @@ def encode_frame_to_base64(frame):
     return base64.b64encode(buffer).decode("utf-8")
 
 
+def read_first_frame_from_video_bytes(contents, suffix):
+    """Writes the uploaded video to a temp file and reads just its first frame.
+    cv2.VideoCapture needs a real file path, it cannot read from an in-memory buffer."""
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(contents)
+        tmp_path = tmp.name
+    try:
+        cap = cv2.VideoCapture(tmp_path)
+        ret, frame = cap.read()
+        cap.release()
+    finally:
+        os.remove(tmp_path)
+    return frame if ret else None
+
+
 @app.post("/detect_frame")
 async def detect_frame_endpoint(file: UploadFile = File(...)):
     contents = await file.read()
-    np_arr = np.frombuffer(contents, np.uint8)
-    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    filename = (file.filename or "").lower()
+    note = None
+
+    if filename.endswith(VIDEO_EXTENSIONS):
+        suffix = os.path.splitext(filename)[1]
+        frame = read_first_frame_from_video_bytes(contents, suffix)
+        note = "A video was uploaded — only its first frame was analyzed. Use /detect_stream for full video processing."
+    else:
+        np_arr = np.frombuffer(contents, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
     if frame is None:
-        return JSONResponse(status_code=400, content={"error": "Не удалось прочитать изображение"})
+        return JSONResponse(status_code=400, content={"error": "Could not read an image or a video frame from the uploaded file"})
 
     detections = detect_frame(model, frame)
-    drift_result = drift_monitor.check(frame)
     annotated = draw_detections(frame.copy(), detections)
+    drift_result = drift_monitor.check(frame)
 
     boxes_json = [
         {
@@ -65,18 +96,25 @@ async def detect_frame_endpoint(file: UploadFile = File(...)):
         for (x1, y1, x2, y2, cls_id, conf) in detections
     ]
 
-    return {
+    response = {
         "detections": boxes_json,
         "stats": compute_stats(detections),
         "drift": drift_result,
         "annotated_image_base64": encode_frame_to_base64(annotated),
     }
+    if note:
+        response["note"] = note
+    return response
 
 
 @app.websocket("/detect_stream")
 async def detect_stream_endpoint(websocket: WebSocket):
     await websocket.accept()
     cap = None
+    # Each stream gets its own monitor that auto-calibrates from THIS video's first frames,
+    # instead of sharing one fixed baseline — this is what makes drift detection work
+    # regardless of camera angle (aerial, dashcam, fixed street camera, etc).
+    stream_drift_monitor = DriftMonitor()
     try:
         init_message = await websocket.receive_text()
         params = json.loads(init_message)
@@ -85,7 +123,7 @@ async def detect_stream_endpoint(websocket: WebSocket):
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            await websocket.send_json({"error": f"Не удалось открыть видео: {video_path}"})
+            await websocket.send_json({"error": f"Could not open video: {video_path}"})
             return
 
         while True:
@@ -95,7 +133,7 @@ async def detect_stream_endpoint(websocket: WebSocket):
                 break
 
             detections = detect_frame(model, frame)
-            drift_result = drift_monitor.check(frame)
+            drift_result = stream_drift_monitor.check(frame)
             annotated = draw_detections(frame.copy(), detections)
 
             await websocket.send_json({
@@ -104,7 +142,7 @@ async def detect_stream_endpoint(websocket: WebSocket):
                 "drift": drift_result,
             })
 
-            await asyncio.sleep(0.03)  # небольшой буфер, не душим event loop
+            await asyncio.sleep(0.03)  # small buffer so we don't choke the event loop
 
     except WebSocketDisconnect:
         pass

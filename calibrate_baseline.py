@@ -24,7 +24,7 @@ def video_stats(video_path, sample_frames=SAMPLE_FRAMES):
 
 
 def main():
-    videos = sorted(glob.glob("data/raw/*.mp4"))
+    videos = sorted(glob.glob("data/samples/*.mp4"))
     for video_path in videos:
         stats = video_stats(video_path)
         if stats:
