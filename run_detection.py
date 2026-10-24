@@ -61,7 +61,7 @@ def main():
         video_files.extend(glob.glob(os.path.join(INPUT_DIR, pattern)))
 
     if not video_files:
-        print("Видео не найдены в data/raw — проверь путь и расширения файлов.")
+        print(f"Видео не найдены в {INPUT_DIR} — проверь путь и расширения файлов.")
         return
 
     video_files = sorted(video_files)[:MAX_VIDEOS]

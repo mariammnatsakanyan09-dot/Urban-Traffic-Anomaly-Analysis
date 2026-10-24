@@ -119,7 +119,7 @@ async def detect_stream_endpoint(websocket: WebSocket):
         init_message = await websocket.receive_text()
         params = json.loads(init_message)
         video_name = params.get("video")
-        video_path = f"data/raw/{video_name}"
+        video_path = f"data/samples/{video_name}"
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
