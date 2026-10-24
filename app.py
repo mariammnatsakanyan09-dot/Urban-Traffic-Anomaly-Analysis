@@ -1,13 +1,14 @@
 import base64
 import asyncio
-import json
 import os
 import tempfile
+from typing import Literal, Optional
 
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from detector import load_model, detect_frame, draw_detections, TARGET_CLASSES
 from drift_monitor import DriftMonitor
@@ -23,6 +24,55 @@ model = load_model("yolov8s.pt")  # load the model once at server startup
 drift_monitor = DriftMonitor(baseline_brightness=116.9, baseline_contrast=49.8)
 
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".webm", ".mkv")
+VIDEO_DIR = "data/samples"
+
+
+# ---------------------------------------------------------------------------
+# Pydantic schemas: validate the data going out of (and into) the API
+# ---------------------------------------------------------------------------
+
+class Detection(BaseModel):
+    # the JSON key is "class", which is a reserved word in Python, hence the alias
+    model_config = ConfigDict(populate_by_name=True)
+
+    class_name: str = Field(alias="class")
+    confidence: float = Field(ge=0.0, le=1.0)
+    bbox: list[int] = Field(min_length=4, max_length=4)
+
+
+class Stats(BaseModel):
+    counts: dict[str, int]
+    total_vehicles: int = Field(ge=0)
+    load: Literal["low", "medium", "high"]
+
+
+class DriftResult(BaseModel):
+    timestamp: float
+    brightness: float
+    contrast: float
+    alert: Optional[Literal["low_light", "low_contrast"]] = None
+    calibrating: Optional[bool] = None
+
+
+class DetectFrameResponse(BaseModel):
+    detections: list[Detection]
+    stats: Stats
+    drift: DriftResult
+    annotated_image_base64: Optional[str] = None
+    note: Optional[str] = None
+
+
+class StreamInit(BaseModel):
+    """First message a client sends over /detect_stream.
+
+    Only a plain file name with a known video extension is accepted (no slashes),
+    so a client cannot point the server at files outside data/samples/ (e.g. "../x.mp4").
+    """
+
+    video: str = Field(pattern=r"^[\w\- .]+\.(mp4|mov|avi|webm|mkv)$", max_length=255)
+
+
+# ---------------------------------------------------------------------------
 
 
 def compute_stats(detections):
@@ -66,7 +116,11 @@ def read_first_frame_from_video_bytes(contents, suffix):
     return frame if ret else None
 
 
-@app.post("/detect_frame")
+@app.post(
+    "/detect_frame",
+    response_model=DetectFrameResponse,
+    response_model_exclude_unset=True,  # keep "note" / "calibrating" out of the JSON when unused
+)
 async def detect_frame_endpoint(file: UploadFile = File(...)):
     contents = await file.read()
     filename = (file.filename or "").lower()
@@ -117,9 +171,15 @@ async def detect_stream_endpoint(websocket: WebSocket):
     stream_drift_monitor = DriftMonitor()
     try:
         init_message = await websocket.receive_text()
-        params = json.loads(init_message)
-        video_name = params.get("video")
-        video_path = f"data/samples/{video_name}"
+        try:
+            params = StreamInit.model_validate_json(init_message)
+        except ValidationError:
+            await websocket.send_json({
+                "error": 'Invalid request: expected {"video": "<file name>.mp4"} with a plain file name (no folders).'
+            })
+            return
+
+        video_path = f"{VIDEO_DIR}/{params.video}"
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
